@@ -46,8 +46,41 @@
 #include <elas_ros/ElasFrameData.h>
 
 #include <libelas/elas.h>
+#include <thread>
+
+#include <time.h>
 
 //#define DOWN_SAMPLE
+
+
+  void rectifyResizeImg(const sensor_msgs::ImageConstPtr& image_msg, 
+			const boost::scoped_ptr<Elas::parameters> param_,
+			const cv::Mat& K, const cv::Mat& distCoe,
+			sensor_msgs::ImagePtr& img_proc) 
+  {
+    cv_bridge::CvImagePtr cvPtr;
+    cvPtr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::MONO8);
+    cv::Mat undist;
+    if (param_->do_rectification)
+    {
+       cv::undistort(cvPtr->image, undist, K, distCoe);
+    }
+    else
+    {
+       undist = cvPtr->image;
+    }
+    
+    img_proc->header 	= image_msg->header;
+    img_proc->height 	= image_msg->height * param_->img_resize_scale;
+    img_proc->width 	= image_msg->width * param_->img_resize_scale;
+    img_proc->encoding 	= sensor_msgs::image_encodings::MONO8;
+    img_proc->step 	= img_proc->width * sizeof(float);
+    //
+    cv::resize(undist, img_proc->data, 
+	       cv::Size(img_proc->width, img_proc->height),
+               0, 0, cv::INTER_LINEAR);
+  }
+  
 
 class Elas_Proc
 {
@@ -80,6 +113,10 @@ public:
     local_nh.param<bool>("filter_adaptive_mean", filter_adaptive_mean, 1);
     local_nh.param<bool>("postprocess_only_left", postprocess_only_left, 1);
     local_nh.param<bool>("subsampling", subsampling, 0);
+    //
+    local_nh.param<int>("img_temporal_samp", img_temporal_samp, 5);
+    local_nh.param<double>("img_resize_scale", img_resize_scale, 0.25);
+    local_nh.param<bool>("do_rectification", do_rectification, 1);
 
     // Topics
     std::string stereo_ns = nh.resolveName("stereo");
@@ -95,7 +132,7 @@ public:
     right_info_sub_.subscribe(nh, right_info_topic, 1);
 
     ROS_INFO("Subscribing to:\n%s\n%s\n%s\n%s", left_topic.c_str(), right_topic.c_str(), left_info_topic.c_str(), right_info_topic.c_str());
-
+    
     image_transport::ImageTransport local_it(local_nh);
 
     disp_pub_.reset(new Publisher(local_it.advertise("image_disparity", 1)));
@@ -150,6 +187,12 @@ public:
     param->filter_adaptive_mean = filter_adaptive_mean;
     param->postprocess_only_left = postprocess_only_left;
     param->subsampling = subsampling;
+    //
+    param->img_temporal_samp = img_temporal_samp;
+    param->img_resize_scale = img_resize_scale;
+    param->do_rectification = do_rectification;
+    
+    count_img = 0;
 
     //param->match_texture = 1;
     //param->postprocess_only_left = 1;
@@ -179,8 +222,8 @@ public:
     {
       cv_bridge::CvImageConstPtr cv_ptr;
       cv_ptr = cv_bridge::toCvShare(l_image_msg, sensor_msgs::image_encodings::RGB8);
-      image_geometry::StereoCameraModel model;
-      model.fromCameraInfo(*l_info_msg, *r_info_msg);
+      // image_geometry::StereoCameraModel model;
+      // model.fromCameraInfo(*l_info_msg, *r_info_msg);
       pcl::PCLHeader l_info_header = pcl_conversions::toPCL(l_info_msg->header);
 
       PointCloud::Ptr point_cloud(new PointCloud());
@@ -235,7 +278,7 @@ public:
         left_uv.y = index / l_width;
 #endif
         cv::Point3d point;
-        model.projectDisparityTo3d(left_uv, l_disp_data[index], point);
+        model_.projectDisparityTo3d(left_uv, l_disp_data[index], point);
         point_cloud->points[i].x = point.x;
         point_cloud->points[i].y = point.y;
         point_cloud->points[i].z = point.z;
@@ -257,24 +300,48 @@ public:
     }
   }
 
+  
+  
+  
   void process(const sensor_msgs::ImageConstPtr &l_image_msg,
                const sensor_msgs::ImageConstPtr &r_image_msg,
                const sensor_msgs::CameraInfoConstPtr &l_info_msg,
                const sensor_msgs::CameraInfoConstPtr &r_info_msg)
   {
-
+    //Timer Start
+    int first_clock = clock();
+    
     ROS_DEBUG("Received images and camera info.");
+    
+    // Temporal sampling
+    if (param->img_temporal_samp > count_img) {
+      count_img ++;
+      return ;
+    }
+    // Reset counter
+    count_img = 0;
 
     // Update the camera model
     model_.fromCameraInfo(l_info_msg, r_info_msg);
+    
+    // Spatial sampling & Rectification
+    sensor_msgs::Image l_proc_img , r_proc_img;
+    sensor_msgs::Image::Ptr l_proc_msg = boost::shared_ptr<sensor_msgs::Image>(l_proc_img);
+    sensor_msgs::Image::Ptr r_proc_msg = boost::shared_ptr<sensor_msgs::Image>(r_proc_img);
+    std::thread threadLeft(&Frame::rectifyResizeImg, this, l_image_msg, param, K_, distCoe_, l_proc_msg);
+    std::thread threadRight(&Frame::rectifyResizeImg, this, r_image_msg, param, K_, distCoe_, r_proc_msg);
+    threadLeft.join();
+    threadRight.join();
+// rectifyResizeImg(l_image_msg, l_proc_msg);
+// rectifyResizeImg(r_image_msg, r_proc_msg);
 
     // Allocate new disparity image message
     stereo_msgs::DisparityImagePtr disp_msg =
         boost::make_shared<stereo_msgs::DisparityImage>();
-    disp_msg->header = l_info_msg->header;
-    disp_msg->image.header = l_info_msg->header;
-    disp_msg->image.height = l_image_msg->height;
-    disp_msg->image.width = l_image_msg->width;
+    disp_msg->header = l_proc_msg->header;
+    disp_msg->image.header = l_proc_msg->header;
+    disp_msg->image.height = l_proc_msg->height;
+    disp_msg->image.width = l_proc_msg->width;
     disp_msg->image.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
     disp_msg->image.step = disp_msg->image.width * sizeof(float);
     disp_msg->image.data.resize(disp_msg->image.height * disp_msg->image.step);
@@ -292,43 +359,43 @@ public:
     uint8_t *l_image_data, *r_image_data;
     int32_t l_step, r_step;
     cv_bridge::CvImageConstPtr l_cv_ptr, r_cv_ptr;
-    if (l_image_msg->encoding == sensor_msgs::image_encodings::MONO8)
+    if (l_proc_msg->encoding == sensor_msgs::image_encodings::MONO8)
     {
-      l_image_data = const_cast<uint8_t *>(&(l_image_msg->data[0]));
-      l_step = l_image_msg->step;
+      l_image_data = const_cast<uint8_t *>(&(l_proc_msg->data[0]));
+      l_step = l_proc_msg->step;
     }
     else
     {
-      l_cv_ptr = cv_bridge::toCvShare(l_image_msg, sensor_msgs::image_encodings::MONO8);
+      l_cv_ptr = cv_bridge::toCvShare(l_proc_msg, sensor_msgs::image_encodings::MONO8);
       l_image_data = l_cv_ptr->image.data;
       l_step = l_cv_ptr->image.step[0];
     }
-    if (r_image_msg->encoding == sensor_msgs::image_encodings::MONO8)
+    if (r_proc_msg->encoding == sensor_msgs::image_encodings::MONO8)
     {
-      r_image_data = const_cast<uint8_t *>(&(r_image_msg->data[0]));
-      r_step = r_image_msg->step;
+      r_image_data = const_cast<uint8_t *>(&(r_proc_msg->data[0]));
+      r_step = r_proc_msg->step;
     }
     else
     {
-      r_cv_ptr = cv_bridge::toCvShare(r_image_msg, sensor_msgs::image_encodings::MONO8);
+      r_cv_ptr = cv_bridge::toCvShare(r_proc_msg, sensor_msgs::image_encodings::MONO8);
       r_image_data = r_cv_ptr->image.data;
       r_step = r_cv_ptr->image.step[0];
     }
 
     ROS_ASSERT(l_step == r_step);
-    ROS_ASSERT(l_image_msg->width == r_image_msg->width);
-    ROS_ASSERT(l_image_msg->height == r_image_msg->height);
+    ROS_ASSERT(l_proc_msg->width == r_proc_msg->width);
+    ROS_ASSERT(l_proc_msg->height == r_proc_msg->height);
 
 #ifdef DOWN_SAMPLE
-    int32_t width = l_image_msg->width / 2;
-    int32_t height = l_image_msg->height / 2;
+    int32_t width = l_proc_msg->width / 2;
+    int32_t height = l_proc_msg->height / 2;
 #else
-    int32_t width = l_image_msg->width;
-    int32_t height = l_image_msg->height;
+    int32_t width = l_proc_msg->width;
+    int32_t height = l_proc_msg->height;
 #endif
 
     // Allocate
-    const int32_t dims[3] = {l_image_msg->width, l_image_msg->height, l_step};
+    const int32_t dims[3] = {l_proc_msg->width, l_proc_msg->height, l_step};
     //float* l_disp_data = new float[width*height*sizeof(float)];
     float *l_disp_data = reinterpret_cast<float *>(&disp_msg->image.data[0]);
     float *r_disp_data = new float[width * height * sizeof(float)];
@@ -347,13 +414,13 @@ public:
     }
 
     cv_bridge::CvImage out_depth_msg;
-    out_depth_msg.header = l_image_msg->header;
+    out_depth_msg.header = l_proc_msg->header;
     out_depth_msg.encoding = sensor_msgs::image_encodings::MONO16;
     out_depth_msg.image = cv::Mat(height, width, CV_16UC1);
     uint16_t *out_depth_msg_image_data = reinterpret_cast<uint16_t *>(&out_depth_msg.image.data[0]);
 
     cv_bridge::CvImage out_msg;
-    out_msg.header = l_image_msg->header;
+    out_msg.header = l_proc_msg->header;
     out_msg.encoding = sensor_msgs::image_encodings::MONO8;
     out_msg.image = cv::Mat(height, width, CV_8UC1);
     std::vector<int32_t> inliers;
@@ -375,13 +442,19 @@ public:
     // Publish
     disp_pub_->publish(out_msg.toImageMsg());
     depth_pub_->publish(out_depth_msg.toImageMsg());
-    publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
+    publish_point_cloud(l_proc_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
 
     pub_disparity_.publish(disp_msg);
 
     // Cleanup data
     //delete l_disp_data;
     delete r_disp_data;
+    
+    //Timer stop:		
+    int second_clock = clock();	 //stop the timer
+    double elapMilli = double(second_clock - first_clock) / double(CLOCKS_PER_SEC) * 1000.0f;     //milliseconds from Begin to End
+    std::cout << "total time cost of libelas = " << elapMilli << std::endl;
+
   }
 
 private:
@@ -397,6 +470,14 @@ private:
   boost::shared_ptr<Elas> elas_;
   int queue_size_;
 
+  //
+  int    img_temporal_samp;
+  double img_resize_scale;
+  bool   do_rectification;
+  //
+  int count_img;
+  cv::Mat K_, distCoe_;
+  
   // Struct parameters
   int disp_min;
   int disp_max;
@@ -427,6 +508,9 @@ private:
   boost::scoped_ptr<Elas::parameters> param;
 };
 
+//TODO
+// include image resizing and rectification code 
+// before running elas
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "elas_ros");
@@ -435,13 +519,15 @@ int main(int argc, char **argv)
     ROS_WARN("'stereo' has not been remapped! Example command-line usage:\n"
              "\t$ rosrun viso2_ros stereo_odometer stereo:=narrow_stereo image:=image_rect");
   }
+  /*
   if (ros::names::remap("image").find("rect") == std::string::npos)
   {
     ROS_WARN("stereo_odometer needs rectified input images. The used image "
              "topic is '%s'. Are you sure the images are rectified?",
              ros::names::remap("image").c_str());
   }
-
+  */
+  
   std::string transport = argc > 1 ? argv[1] : "raw";
   Elas_Proc processor(transport);
 

@@ -19,8 +19,23 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
 )
 
-find_package(OpenCV REQUIRED)
+# customize opencv dir
+if ($ENV{ROS_DISTRO} STREQUAL "indigo")
+     set( OpenCV_DIR /opt/opencv2/share/OpenCV )
+     find_package(OpenCV 2.4.13 REQUIRED core ocl)
+elseif ($ENV{ROS_DISTRO} STREQUAL "kinetic")
+     set( OpenCV_DIR /opt/opencv3/share/OpenCV )
+     find_package(OpenCV 3.4.1 REQUIRED
+                PATHS /opt/opencv3
+                NO_DEFAULT_PATH)
+endif()
+# find_package(OpenCV REQUIRED)
+MESSAGE("OpenCV include dir: " ${OpenCV_INCLUDE_DIRS})
+MESSAGE("OpenCV libs: " ${OpenCV_LIBS})
+
 find_package(Boost REQUIRED COMPONENTS signals)
+MESSAGE("Boost include dir: " ${Boost_INCLUDE_DIRS})
+MESSAGE("Boost lib: " ${Boost_LIBRARIES})
 
 add_message_files( DIRECTORY msg FILES ElasFrameData.msg)
 
@@ -32,10 +47,11 @@ generate_messages(
 
 add_definitions(-msse3)
 
-include_directories(src ${libelas_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
+include_directories(include ${libelas_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
 
-add_executable(elas_ros src/elas.cpp)
+add_executable(elas_ros src/elas.cpp
+src/image_handler.cpp)
 
 add_dependencies(elas_ros ${catkin_EXPORTED_TARGETS})
 add_dependencies(elas_ros ${PROJECT_NAME}_gencpp)

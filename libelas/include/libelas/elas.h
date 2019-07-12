@@ -82,6 +82,10 @@ public:
     bool    subsampling;            // saves time by only computing disparities for each 2nd pixel
                                     // note: for this option D1 and D2 must be passed with size
                                     //       width/2 x height/2 (rounded towards zero)
+    //
+    int32_t img_temporal_samp;
+    double  img_resize_scale;
+    bool    do_rectification;
     
     // constructor
     parameters (setting s=ROBOTICS) {
