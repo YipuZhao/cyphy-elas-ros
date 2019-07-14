@@ -456,8 +456,13 @@ public:
 
     // stereo rectification
     cv::Mat imLeft, imRight;
-    cv::remap(l_cv_ptr->image,imLeft,M1l,M2l,cv::INTER_LINEAR);
-    cv::remap(r_cv_ptr->image,imRight,M1r,M2r,cv::INTER_LINEAR);
+   cv::remap(l_cv_ptr->image,imLeft,M1l,M2l,cv::INTER_LINEAR);
+   cv::remap(r_cv_ptr->image,imRight,M1r,M2r,cv::INTER_LINEAR);
+    // std::thread threadLeft(&cv::remap, l_cv_ptr->image, imLeft, M1l, M2l, cv::INTER_LINEAR);
+    // std::thread threadRight(&cv::remap, r_cv_ptr->image, imRight, M1r, M2r, cv::INTER_LINEAR);
+    // threadLeft.join();
+    // threadRight.join();
+    //
     l_image_data = imLeft.data;
     l_step = imLeft.step[0];
     r_image_data = imRight.data;

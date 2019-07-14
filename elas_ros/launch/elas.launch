@@ -43,8 +43,8 @@
         <param name="postprocess_only_left" type="bool" value="1"/>
         <param name="subsampling" type="bool" value="0"/>
 
-        <param name="img_temporal_samp" type="int" value="5"/>
-        <param name="img_resize_scale" type="double" value="3"/>
+        <param name="img_temporal_samp" type="int" value="6"/>
+        <!-- rparam name="img_resize_scale" type="double" value="3" -->
         <param name="do_rectification" type="bool" value="1"/>
         <param name="is_fisheye_lens" type="bool" value="0"/>
         <param name="stereo_yaml" type="string" value="/home/yipuzhao/ros_workspace/package_dir/ORB_Data/Gazebo_yaml/pinhole_stereo.yaml"/>
