@@ -5,13 +5,13 @@
     <arg name="elas_ns" default="elas"/>
     
     <!-- If you already have rectified camera images remove the image_proc nodes -->
-    <group ns="$(arg stereo)/left">
+    <!-- <group ns="$(arg stereo)/left">
         <node name="left_rect" pkg="image_proc" type="image_proc"/>
-    </group>
+    </group> -->
     
-    <group ns="$(arg stereo)/right">
+    <!-- <group ns="$(arg stereo)/right">
         <node name="right_rect" pkg="image_proc" type="image_proc"/>
-    </group>
+    </group> -->
 
     <!-- This node actually does the stereo reconstruction -->
     <node name="$(arg elas_ns)" pkg="elas_ros" type="elas_ros" output="screen">
@@ -42,6 +42,12 @@
         <param name="filter_adaptive_mean" type="bool" value="1"/>
         <param name="postprocess_only_left" type="bool" value="1"/>
         <param name="subsampling" type="bool" value="0"/>
+
+        <param name="img_temporal_samp" type="int" value="5"/>
+        <param name="img_resize_scale" type="double" value="3"/>
+        <param name="do_rectification" type="bool" value="1"/>
+        <param name="is_fisheye_lens" type="bool" value="0"/>
+        <param name="stereo_yaml" type="string" value="/home/yipuzhao/ros_workspace/package_dir/ORB_Data/Gazebo_yaml/pinhole_stereo.yaml"/>
 
         <!-- If your cameras are not synchronised then uncomment the following line -->
         <!-- <param name="approximate_sync" value="true" type="bool"/> -->

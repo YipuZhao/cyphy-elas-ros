@@ -50,13 +50,13 @@
 
 #include <time.h>
 
-//#define DOWN_SAMPLE
+#define DOWN_SAMPLE
 
-
+/*
   void rectifyResizeImg(const sensor_msgs::ImageConstPtr& image_msg, 
 			const boost::scoped_ptr<Elas::parameters> param_,
 			const cv::Mat& K, const cv::Mat& distCoe,
-			sensor_msgs::ImagePtr& img_proc) 
+			cv_bridge::CvImage& img_proc) 
   {
     cv_bridge::CvImagePtr cvPtr;
     cvPtr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::MONO8);
@@ -70,16 +70,19 @@
        undist = cvPtr->image;
     }
     
-    img_proc->header 	= image_msg->header;
-    img_proc->height 	= image_msg->height * param_->img_resize_scale;
-    img_proc->width 	= image_msg->width * param_->img_resize_scale;
-    img_proc->encoding 	= sensor_msgs::image_encodings::MONO8;
-    img_proc->step 	= img_proc->width * sizeof(float);
+    img_proc.header 	= image_msg->header;
+ //   img_proc.height 	= image_msg->height * param_->img_resize_scale;
+ //   img_proc.width 	= image_msg->width * param_->img_resize_scale;
+    img_proc.encoding 	= sensor_msgs::image_encodings::MONO8;
+ //   img_proc.step 	= img_proc.width * sizeof(float);
     //
-    cv::resize(undist, img_proc->data, 
-	       cv::Size(img_proc->width, img_proc->height),
+    cv::resize(undist, img_proc.image, 
+	       cv::Size(image_msg->width * param_->img_resize_scale, 
+			image_msg->height * param_->img_resize_scale
+		       ),
                0, 0, cv::INTER_LINEAR);
   }
+  */
   
 
 class Elas_Proc
@@ -115,9 +118,10 @@ public:
     local_nh.param<bool>("subsampling", subsampling, 0);
     //
     local_nh.param<int>("img_temporal_samp", img_temporal_samp, 5);
-    local_nh.param<double>("img_resize_scale", img_resize_scale, 0.25);
+    local_nh.param<double>("img_resize_scale", img_resize_scale, 2);
     local_nh.param<bool>("do_rectification", do_rectification, 1);
-
+    local_nh.param<bool>("is_fisheye_lens", is_fisheye_lens, 1);
+    
     // Topics
     std::string stereo_ns = nh.resolveName("stereo");
     std::string left_topic = ros::names::clean(stereo_ns + "/left/" + nh.resolveName("image"));
@@ -191,8 +195,62 @@ public:
     param->img_temporal_samp = img_temporal_samp;
     param->img_resize_scale = img_resize_scale;
     param->do_rectification = do_rectification;
+    param->is_fisheye_lens = is_fisheye_lens;
     
     count_img = 0;
+    
+    if (param->do_rectification) {
+	// load yaml for stereo rect
+	std::string stereo_yaml;
+	local_nh.param<std::string>("stereo_yaml", stereo_yaml, "");
+    	// Load settings related to stereo calibration
+	cv::FileStorage fsSettings(stereo_yaml, cv::FileStorage::READ);
+	if(!fsSettings.isOpened())
+	{
+	    std::cerr << "ERROR: Wrong path to settings" << std::endl;
+	    return ;
+	}
+
+	cv::Mat K_l, K_r, P_l, P_r, R_l, R_r, D_l, D_r;
+	fsSettings["LEFT.K"] >> K_l;
+	fsSettings["RIGHT.K"] >> K_r;
+
+	fsSettings["LEFT.P"] >> P_l;
+	fsSettings["RIGHT.P"] >> P_r;
+
+	fsSettings["LEFT.R"] >> R_l;
+	fsSettings["RIGHT.R"] >> R_r;
+
+	fsSettings["LEFT.D"] >> D_l;
+	fsSettings["RIGHT.D"] >> D_r;
+
+	int rows_l = fsSettings["LEFT.height"];
+	int cols_l = fsSettings["LEFT.width"];
+	int rows_r = fsSettings["RIGHT.height"];
+	int cols_r = fsSettings["RIGHT.width"];
+
+	if(K_l.empty() || K_r.empty() || P_l.empty() || P_r.empty() || R_l.empty() || R_r.empty() || D_l.empty() || D_r.empty() ||
+		rows_l==0 || rows_r==0 || cols_l==0 || cols_r==0)
+	{
+	   std::cerr << "ERROR: Calibration parameters to rectify stereo are missing!" << std::endl;
+	   return ;
+	}
+
+	if (param->is_fisheye_lens) {
+	  cv::fisheye::initUndistortRectifyMap(K_l,D_l,R_l,P_l,cv::Size(cols_l,rows_l),CV_32F,M1l,M2l);
+	  cv::fisheye::initUndistortRectifyMap(K_r,D_r,R_r,P_r,cv::Size(cols_r,rows_r),CV_32F,M1r,M2r);
+	  std::cout << "finish creating equidistant rectification map!" << std::endl;
+	}
+	else {
+	  cv::initUndistortRectifyMap(K_l,D_l,R_l,P_l.rowRange(0,3).colRange(0,3),cv::Size(cols_l,rows_l),CV_32F,M1l,M2l);
+	  cv::initUndistortRectifyMap(K_r,D_r,R_r,P_r.rowRange(0,3).colRange(0,3),cv::Size(cols_r,rows_r),CV_32F,M1r,M2r);
+	  std::cout << "finish creating rad-tan rectification map!" << std::endl;
+	}
+	
+	float bf = -P_r.at<double>(0,3);
+	std::cout << "bf = " << bf << std::endl;
+	depth_fact = bf * 1000.0f;
+    }
 
     //param->match_texture = 1;
     //param->postprocess_only_left = 1;
@@ -227,7 +285,9 @@ public:
       pcl::PCLHeader l_info_header = pcl_conversions::toPCL(l_info_msg->header);
 
       PointCloud::Ptr point_cloud(new PointCloud());
-      point_cloud->header.frame_id = l_info_header.frame_id;
+      // point_cloud->header.frame_id = l_info_header.frame_id;
+      //TODO for some reason the frame name is not identical; apply a hack for pcd visualization
+      point_cloud->header.frame_id = "camera_left_optical_frame";
       point_cloud->header.stamp = l_info_header.stamp;
       point_cloud->width = 1;
       point_cloud->height = inliers.size();
@@ -257,6 +317,7 @@ public:
           data.disparity[index] = l_disp_data[index];
 #ifdef DOWN_SAMPLE
           cv::Vec3b col = cv_ptr->image.at<cv::Vec3b>(v * 2, u * 2);
+          // cv::Vec3b col = cv_ptr->image.at<cv::Vec3b>(int32_t(v * param->img_resize_scale), int32_t(u * param->img_resize_scale));
 #else
           cv::Vec3b col = cv_ptr->image.at<cv::Vec3b>(v, u);
 #endif
@@ -273,6 +334,8 @@ public:
 #ifdef DOWN_SAMPLE
         left_uv.x = (index % l_width) * 2;
         left_uv.y = (index / l_width) * 2;
+        // left_uv.x = int32_t((index % l_width) * param->img_resize_scale);
+        // left_uv.y = int32_t((index / l_width) * param->img_resize_scale);
 #else
         left_uv.x = index % l_width;
         left_uv.y = index / l_width;
@@ -314,7 +377,7 @@ public:
     ROS_DEBUG("Received images and camera info.");
     
     // Temporal sampling
-    if (param->img_temporal_samp > count_img) {
+    if (count_img < param->img_temporal_samp) {
       count_img ++;
       return ;
     }
@@ -322,26 +385,31 @@ public:
     count_img = 0;
 
     // Update the camera model
-    model_.fromCameraInfo(l_info_msg, r_info_msg);
+    // model_.fromCameraInfo(l_info_msg, r_info_msg);
     
     // Spatial sampling & Rectification
-    sensor_msgs::Image l_proc_img , r_proc_img;
-    sensor_msgs::Image::Ptr l_proc_msg = boost::shared_ptr<sensor_msgs::Image>(l_proc_img);
-    sensor_msgs::Image::Ptr r_proc_msg = boost::shared_ptr<sensor_msgs::Image>(r_proc_img);
-    std::thread threadLeft(&Frame::rectifyResizeImg, this, l_image_msg, param, K_, distCoe_, l_proc_msg);
-    std::thread threadRight(&Frame::rectifyResizeImg, this, r_image_msg, param, K_, distCoe_, r_proc_msg);
+    /*
+    cv_bridge::CvImage l_proc_img , r_proc_img;
+    std::thread threadLeft(&rectifyResizeImg, 
+			   l_image_msg, param, model_, l_proc_img);
+    std::thread threadRight(&rectifyResizeImg, 
+			    r_image_msg, param, model_, r_proc_img);
     threadLeft.join();
     threadRight.join();
+    */
 // rectifyResizeImg(l_image_msg, l_proc_msg);
 // rectifyResizeImg(r_image_msg, r_proc_msg);
 
+ //   sensor_msgs::ImagePtr l_proc_msg = l_proc_img.toImageMsg();
+ //   sensor_msgs::ImagePtr r_proc_msg = r_proc_img.toImageMsg();
+    
     // Allocate new disparity image message
     stereo_msgs::DisparityImagePtr disp_msg =
         boost::make_shared<stereo_msgs::DisparityImage>();
-    disp_msg->header = l_proc_msg->header;
-    disp_msg->image.header = l_proc_msg->header;
-    disp_msg->image.height = l_proc_msg->height;
-    disp_msg->image.width = l_proc_msg->width;
+    disp_msg->header = l_image_msg->header;
+    disp_msg->image.header = l_image_msg->header;
+    disp_msg->image.height = l_image_msg->height;
+    disp_msg->image.width = l_image_msg->width;
     disp_msg->image.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
     disp_msg->image.step = disp_msg->image.width * sizeof(float);
     disp_msg->image.data.resize(disp_msg->image.height * disp_msg->image.step);
@@ -349,9 +417,11 @@ public:
     disp_msg->max_disparity = param->disp_max;
 
     // Stereo parameters
-    float f = model_.right().fx();
-    float T = model_.baseline();
-    float depth_fact = T * f * 1000.0f;
+    if (!param->do_rectification) {
+      float f = model_.right().fx();
+      float T = model_.baseline();
+      depth_fact = T * f * 1000.0f;
+    }
     uint16_t bad_point = std::numeric_limits<uint16_t>::max();
 
     // Have a synchronised pair of images, now to process using elas
@@ -359,43 +429,59 @@ public:
     uint8_t *l_image_data, *r_image_data;
     int32_t l_step, r_step;
     cv_bridge::CvImageConstPtr l_cv_ptr, r_cv_ptr;
-    if (l_proc_msg->encoding == sensor_msgs::image_encodings::MONO8)
+    //
+    // if (l_image_msg->encoding == sensor_msgs::image_encodings::MONO8)
     {
-      l_image_data = const_cast<uint8_t *>(&(l_proc_msg->data[0]));
-      l_step = l_proc_msg->step;
+      // l_image_data = const_cast<uint8_t *>(&(l_image_msg->data[0]));
+      // l_step = l_image_msg->step;
     }
-    else
+    // else
     {
-      l_cv_ptr = cv_bridge::toCvShare(l_proc_msg, sensor_msgs::image_encodings::MONO8);
-      l_image_data = l_cv_ptr->image.data;
-      l_step = l_cv_ptr->image.step[0];
+      l_cv_ptr = cv_bridge::toCvShare(l_image_msg, sensor_msgs::image_encodings::MONO8);
+      // l_image_data = l_cv_ptr->image.data;
+      // l_step = l_cv_ptr->image.step[0];
     }
-    if (r_proc_msg->encoding == sensor_msgs::image_encodings::MONO8)
+    //
+    // if (r_image_msg->encoding == sensor_msgs::image_encodings::MONO8)
     {
-      r_image_data = const_cast<uint8_t *>(&(r_proc_msg->data[0]));
-      r_step = r_proc_msg->step;
+      // r_image_data = const_cast<uint8_t *>(&(r_image_msg->data[0]));
+      // r_step = r_image_msg->step;
     }
-    else
+    // else
     {
-      r_cv_ptr = cv_bridge::toCvShare(r_proc_msg, sensor_msgs::image_encodings::MONO8);
-      r_image_data = r_cv_ptr->image.data;
-      r_step = r_cv_ptr->image.step[0];
+      r_cv_ptr = cv_bridge::toCvShare(r_image_msg, sensor_msgs::image_encodings::MONO8);
+      // r_image_data = r_cv_ptr->image.data;
+      // r_step = r_cv_ptr->image.step[0];
     }
 
+    // stereo rectification
+    cv::Mat imLeft, imRight;
+    cv::remap(l_cv_ptr->image,imLeft,M1l,M2l,cv::INTER_LINEAR);
+    cv::remap(r_cv_ptr->image,imRight,M1r,M2r,cv::INTER_LINEAR);
+    l_image_data = imLeft.data;
+    l_step = imLeft.step[0];
+    r_image_data = imRight.data;
+    r_step = imRight.step[0];
+	
     ROS_ASSERT(l_step == r_step);
-    ROS_ASSERT(l_proc_msg->width == r_proc_msg->width);
-    ROS_ASSERT(l_proc_msg->height == r_proc_msg->height);
+    //ROS_ASSERT(l_image_msg->width == r_image_msg->width);
+    //ROS_ASSERT(l_image_msg->height == r_image_msg->height);
+    ROS_ASSERT(imLeft.width == imRight.width);
+    ROS_ASSERT(imLeft.height == imRight.height);
+    
 
 #ifdef DOWN_SAMPLE
-    int32_t width = l_proc_msg->width / 2;
-    int32_t height = l_proc_msg->height / 2;
+    int32_t width = l_image_msg->width / 2;
+    int32_t height = l_image_msg->height / 2;
+    // int32_t width = int32_t(l_image_msg->width / param->img_resize_scale);
+    // int32_t height = int32_t(l_image_msg->height / param->img_resize_scale);
 #else
-    int32_t width = l_proc_msg->width;
-    int32_t height = l_proc_msg->height;
+    int32_t width = l_image_msg->width;
+    int32_t height = l_image_msg->height;
 #endif
 
     // Allocate
-    const int32_t dims[3] = {l_proc_msg->width, l_proc_msg->height, l_step};
+    const int32_t dims[3] = {l_image_msg->width, l_image_msg->height, l_step};
     //float* l_disp_data = new float[width*height*sizeof(float)];
     float *l_disp_data = reinterpret_cast<float *>(&disp_msg->image.data[0]);
     float *r_disp_data = new float[width * height * sizeof(float)];
@@ -414,13 +500,13 @@ public:
     }
 
     cv_bridge::CvImage out_depth_msg;
-    out_depth_msg.header = l_proc_msg->header;
+    out_depth_msg.header = l_image_msg->header;
     out_depth_msg.encoding = sensor_msgs::image_encodings::MONO16;
     out_depth_msg.image = cv::Mat(height, width, CV_16UC1);
     uint16_t *out_depth_msg_image_data = reinterpret_cast<uint16_t *>(&out_depth_msg.image.data[0]);
 
     cv_bridge::CvImage out_msg;
-    out_msg.header = l_proc_msg->header;
+    out_msg.header = l_image_msg->header;
     out_msg.encoding = sensor_msgs::image_encodings::MONO8;
     out_msg.image = cv::Mat(height, width, CV_8UC1);
     std::vector<int32_t> inliers;
@@ -442,7 +528,7 @@ public:
     // Publish
     disp_pub_->publish(out_msg.toImageMsg());
     depth_pub_->publish(out_depth_msg.toImageMsg());
-    publish_point_cloud(l_proc_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
+    // publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
 
     pub_disparity_.publish(disp_msg);
 
@@ -476,7 +562,11 @@ private:
   bool   do_rectification;
   //
   int count_img;
-  cv::Mat K_, distCoe_;
+  // cv::Mat K_, distCoe_;
+  bool is_fisheye_lens;
+  cv::Mat M1l,M2l;
+  cv::Mat M1r,M2r;
+  double depth_fact;
   
   // Struct parameters
   int disp_min;

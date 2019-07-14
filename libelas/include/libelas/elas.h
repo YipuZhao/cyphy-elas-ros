@@ -86,6 +86,7 @@ public:
     int32_t img_temporal_samp;
     double  img_resize_scale;
     bool    do_rectification;
+    bool    is_fisheye_lens;
     
     // constructor
     parameters (setting s=ROBOTICS) {

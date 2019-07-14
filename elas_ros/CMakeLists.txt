@@ -51,7 +51,7 @@ include_directories(include ${libelas_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
 
 add_executable(elas_ros src/elas.cpp
-src/image_handler.cpp)
+  src/image_handler.cpp)
 
 add_dependencies(elas_ros ${catkin_EXPORTED_TARGETS})
 add_dependencies(elas_ros ${PROJECT_NAME}_gencpp)
@@ -59,5 +59,16 @@ add_dependencies(elas_ros ${PROJECT_NAME}_gencpp)
 add_executable(pc_construction src/pc_construction.cpp)
 add_dependencies(pc_construction ${PROJECT_NAME}_gencpp)
 
-target_link_libraries(elas_ros ${OpenCV_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
-target_link_libraries(pc_construction ${OpenCV_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+target_compile_options(elas_ros PUBLIC  -std=c++11 -pthread)
+target_link_libraries(elas_ros 
+  pthread
+  ${OpenCV_LIBRARIES} 
+  ${Boost_LIBRARIES} 
+  ${catkin_LIBRARIES})
+target_compile_options(pc_construction PUBLIC  -std=c++11 -pthread)  
+target_link_libraries(pc_construction 
+  pthread
+  ${OpenCV_LIBRARIES} 
+  ${Boost_LIBRARIES} 
+  ${catkin_LIBRARIES})
+  
