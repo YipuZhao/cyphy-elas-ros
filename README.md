@@ -1,3 +1,14 @@
+## A modified version of ELAS
+
+A few features added:
+- Frame rate configuration
+- Fisheye rectification
+
+Works on VGA video with ~100ms per stereo pair.
+
+Contact if there's any question:
+  Yipu Zhao <<yipu.zhao@gatech.edu>>
+
 ## ELAS - Cyphy
 
 ROS packages containing a wrapper for libelas, a stereo matching library. 
