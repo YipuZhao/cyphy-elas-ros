@@ -7,10 +7,16 @@ add_definitions(-msse3)
 
 find_package(catkin REQUIRED)
 
+find_package(OpenMP)
+
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES elas
 )
+
+if(OpenMP_CXX_FOUND)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")	
+endif()
 
 add_library(elas src/descriptor.cpp src/elas.cpp src/filter.cpp src/matrix.cpp src/triangle.cpp)
 include_directories(include include/libelas ${catkin_INCLUDE_DIRS})

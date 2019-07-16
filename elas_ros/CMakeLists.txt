@@ -37,6 +37,8 @@ find_package(Boost REQUIRED COMPONENTS signals)
 MESSAGE("Boost include dir: " ${Boost_INCLUDE_DIRS})
 MESSAGE("Boost lib: " ${Boost_LIBRARIES})
 
+find_package(OpenMP)
+
 add_message_files( DIRECTORY msg FILES ElasFrameData.msg)
 
 generate_messages(
@@ -46,6 +48,8 @@ generate_messages(
 )
 
 add_definitions(-msse3)
+
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -std=c++11 -fopenmp") 
 
 include_directories(include ${libelas_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
@@ -59,16 +63,33 @@ add_dependencies(elas_ros ${PROJECT_NAME}_gencpp)
 add_executable(pc_construction src/pc_construction.cpp)
 add_dependencies(pc_construction ${PROJECT_NAME}_gencpp)
 
-target_compile_options(elas_ros PUBLIC  -std=c++11 -pthread)
-target_link_libraries(elas_ros 
-  pthread
-  ${OpenCV_LIBRARIES} 
-  ${Boost_LIBRARIES} 
-  ${catkin_LIBRARIES})
-target_compile_options(pc_construction PUBLIC  -std=c++11 -pthread)  
-target_link_libraries(pc_construction 
-  pthread
-  ${OpenCV_LIBRARIES} 
-  ${Boost_LIBRARIES} 
-  ${catkin_LIBRARIES})
-  
+
+if(OpenMP_CXX_FOUND)
+  target_compile_options(elas_ros PUBLIC  -std=c++11 -fopenmp)
+  target_link_libraries(elas_ros 
+    OpenMP::OpenMP_CXX
+    ${OpenCV_LIBRARIES} 
+    ${Boost_LIBRARIES} 
+    ${catkin_LIBRARIES})  
+else()
+  target_compile_options(elas_ros PUBLIC  -std=c++11)
+  target_link_libraries(elas_ros 
+    ${OpenCV_LIBRARIES} 
+    ${Boost_LIBRARIES} 
+    ${catkin_LIBRARIES})  
+endif()
+
+if(OpenMP_CXX_FOUND)
+  target_compile_options(pc_construction PUBLIC  -std=c++11 -fopenmp)  
+  target_link_libraries(pc_construction 
+    OpenMP::OpenMP_CXX
+    ${OpenCV_LIBRARIES} 
+    ${Boost_LIBRARIES} 
+    ${catkin_LIBRARIES})
+else()
+  target_compile_options(pc_construction PUBLIC  -std=c++11)  
+  target_link_libraries(pc_construction 
+    ${OpenCV_LIBRARIES} 
+    ${Boost_LIBRARIES} 
+    ${catkin_LIBRARIES})
+endif()

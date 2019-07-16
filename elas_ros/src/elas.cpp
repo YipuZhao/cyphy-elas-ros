@@ -52,6 +52,8 @@
 
 #define DOWN_SAMPLE
 
+#define VERBOSE_TIMECOST
+
 /*
   void rectifyResizeImg(const sensor_msgs::ImageConstPtr& image_msg, 
 			const boost::scoped_ptr<Elas::parameters> param_,
@@ -375,8 +377,10 @@ public:
                const sensor_msgs::CameraInfoConstPtr &l_info_msg,
                const sensor_msgs::CameraInfoConstPtr &r_info_msg)
   {
+#ifdef VERBOSE_TIMECOST
     //Timer Start
     int first_clock = clock();
+#endif
     
     ROS_DEBUG("Received images and camera info.");
     
@@ -491,6 +495,14 @@ public:
     // std::thread threadRight(&cv::remap, r_cv_ptr->image, imRight, M1r, M2r, cv::INTER_LINEAR);
     // threadLeft.join();
     // threadRight.join();
+       
+#ifdef VERBOSE_TIMECOST 
+    //Timer stop:		
+    int second_clock = clock();	 //stop the timer
+    double elapMilli = double(second_clock - first_clock) / double(CLOCKS_PER_SEC) * 1000.0f;     //milliseconds from Begin to End
+    std::cout << "time cost of remap = " << elapMilli << std::endl;
+#endif
+    
     //
     l_image_data = imLeft.data;
     l_step = imLeft.step[0];
@@ -538,6 +550,14 @@ public:
     // Process
     elas_->process(l_image_data, r_image_data, l_disp_data, r_disp_data, dims);
 
+    
+#ifdef VERBOSE_TIMECOST
+    //Timer stop:		
+    second_clock = clock();	 //stop the timer
+    elapMilli = double(second_clock - first_clock) / double(CLOCKS_PER_SEC) * 1000.0f;     //milliseconds from Begin to End
+    std::cout << "time cost of elas proc = " << elapMilli << std::endl;
+#endif
+    
     // Find the max for scaling the image colour
     float disp_max = 0;
     for (int32_t i = 0; i < width * height; i++)
@@ -578,7 +598,7 @@ public:
     // Publish
     disp_pub_->publish(out_msg.toImageMsg());
     depth_pub_->publish(out_depth_msg.toImageMsg());
-    publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
+    // publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
     
     //TODO publish cam info for depth image
     cam_info_pub_.publish(cam_info_msg);
@@ -589,11 +609,13 @@ public:
     //delete l_disp_data;
     delete r_disp_data;
     
+#ifdef VERBOSE_TIMECOST
     //Timer stop:		
-    int second_clock = clock();	 //stop the timer
-    double elapMilli = double(second_clock - first_clock) / double(CLOCKS_PER_SEC) * 1000.0f;     //milliseconds from Begin to End
+    second_clock = clock();	 //stop the timer
+    elapMilli = double(second_clock - first_clock) / double(CLOCKS_PER_SEC) * 1000.0f;     //milliseconds from Begin to End
     std::cout << "total time cost of libelas = " << elapMilli << std::endl;
-
+#endif
+    
   }
 
 private:
