@@ -128,6 +128,10 @@ public:
     std::string right_topic = ros::names::clean(stereo_ns + "/right/" + nh.resolveName("image"));
     std::string left_info_topic = stereo_ns + "/left/camera_info";
     std::string right_info_topic = stereo_ns + "/right/camera_info";
+    
+    std::string depth_cam_info;
+    local_nh.param<std::string>("depth_cam_info", depth_cam_info, "");
+    cam_info_pub_ = local_nh.advertise<sensor_msgs::CameraInfo>(depth_cam_info, 1);
 
     image_transport::ImageTransport it(nh);
     left_sub_.subscribe(it, left_topic, 1, transport);
@@ -285,9 +289,9 @@ public:
       pcl::PCLHeader l_info_header = pcl_conversions::toPCL(l_info_msg->header);
 
       PointCloud::Ptr point_cloud(new PointCloud());
-      // point_cloud->header.frame_id = l_info_header.frame_id;
+      point_cloud->header.frame_id = l_info_header.frame_id;
       //TODO for some reason the frame name is not identical; apply a hack for pcd visualization
-      point_cloud->header.frame_id = "camera_left_optical_frame";
+      // point_cloud->header.frame_id = "camera_left_optical_frame";
       point_cloud->header.stamp = l_info_header.stamp;
       point_cloud->width = 1;
       point_cloud->height = inliers.size();
@@ -415,13 +419,38 @@ public:
     disp_msg->image.data.resize(disp_msg->image.height * disp_msg->image.step);
     disp_msg->min_disparity = param->disp_min;
     disp_msg->max_disparity = param->disp_max;
+    
+    sensor_msgs::CameraInfoPtr cam_info_msg = boost::make_shared<sensor_msgs::CameraInfo>();
+    cam_info_msg->header = l_info_msg->header;
+    cam_info_msg->distortion_model = l_info_msg->distortion_model;
+    cam_info_msg->height = l_info_msg->height;
+    cam_info_msg->width = l_info_msg->width;
+    cam_info_msg->K = l_info_msg->K;
+    cam_info_msg->D = l_info_msg->D;
+    cam_info_msg->R = l_info_msg->R;
+    cam_info_msg->P = l_info_msg->P;
+    cam_info_msg->binning_x = l_info_msg->binning_x;
+    cam_info_msg->binning_y = l_info_msg->binning_y;
 
     // Stereo parameters
     if (!param->do_rectification) {
       float f = model_.right().fx();
       float T = model_.baseline();
-      depth_fact = T * f * 1000.0f;
+      depth_fact = T * f; // * 1000.0f;
     }
+    else {
+      // overwrite projection matrix with rectified version
+      cam_info_msg->K[0] = l_info_msg->P[0];
+      cam_info_msg->K[2] = l_info_msg->P[2];
+      cam_info_msg->K[4] = l_info_msg->P[5];
+      cam_info_msg->K[5] = l_info_msg->P[6];
+      
+      cam_info_msg->D[0] = 0;
+      cam_info_msg->D[1] = 0;
+      cam_info_msg->D[2] = 0;
+      cam_info_msg->D[3] = 0;
+    }
+    
     uint16_t bad_point = std::numeric_limits<uint16_t>::max();
 
     // Have a synchronised pair of images, now to process using elas
@@ -456,8 +485,8 @@ public:
 
     // stereo rectification
     cv::Mat imLeft, imRight;
-   cv::remap(l_cv_ptr->image,imLeft,M1l,M2l,cv::INTER_LINEAR);
-   cv::remap(r_cv_ptr->image,imRight,M1r,M2r,cv::INTER_LINEAR);
+    cv::remap(l_cv_ptr->image,imLeft,M1l,M2l,cv::INTER_LINEAR);
+    cv::remap(r_cv_ptr->image,imRight,M1r,M2r,cv::INTER_LINEAR);
     // std::thread threadLeft(&cv::remap, l_cv_ptr->image, imLeft, M1l, M2l, cv::INTER_LINEAR);
     // std::thread threadRight(&cv::remap, r_cv_ptr->image, imRight, M1r, M2r, cv::INTER_LINEAR);
     // threadLeft.join();
@@ -480,6 +509,21 @@ public:
     int32_t height = l_image_msg->height / 2;
     // int32_t width = int32_t(l_image_msg->width / param->img_resize_scale);
     // int32_t height = int32_t(l_image_msg->height / param->img_resize_scale);
+    
+    cam_info_msg->height = height;
+    cam_info_msg->width = width;
+    
+      cam_info_msg->K[0] /= 2.0;
+      cam_info_msg->K[2] /= 2.0;
+      cam_info_msg->K[4] /= 2.0;
+      cam_info_msg->K[5] /= 2.0;
+      
+      cam_info_msg->P[0] /= 2.0;
+      cam_info_msg->P[2] /= 2.0;
+      cam_info_msg->P[3] /= 2.0;
+      cam_info_msg->P[5] /= 2.0;
+      cam_info_msg->P[6] /= 2.0;
+    
 #else
     int32_t width = l_image_msg->width;
     int32_t height = l_image_msg->height;
@@ -506,7 +550,7 @@ public:
 
     cv_bridge::CvImage out_depth_msg;
     out_depth_msg.header = l_image_msg->header;
-    out_depth_msg.encoding = sensor_msgs::image_encodings::MONO16;
+    out_depth_msg.encoding = sensor_msgs::image_encodings::TYPE_16UC1; // sensor_msgs::image_encodings::MONO16;
     out_depth_msg.image = cv::Mat(height, width, CV_16UC1);
     uint16_t *out_depth_msg_image_data = reinterpret_cast<uint16_t *>(&out_depth_msg.image.data[0]);
 
@@ -522,7 +566,8 @@ public:
       //disp_msg->image.data[i] = out_msg.image.data[i]
 
       float disp = l_disp_data[i];
-      // In milimeters
+      
+      // In meters
       //out_depth_msg_image_data[i] = disp;
       out_depth_msg_image_data[i] = disp <= 0.0f ? bad_point : (uint16_t)(depth_fact / disp);
 
@@ -533,7 +578,10 @@ public:
     // Publish
     disp_pub_->publish(out_msg.toImageMsg());
     depth_pub_->publish(out_depth_msg.toImageMsg());
-    // publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
+    publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
+    
+    //TODO publish cam info for depth image
+    cam_info_pub_.publish(cam_info_msg);
 
     pub_disparity_.publish(disp_msg);
 
@@ -554,6 +602,8 @@ private:
   InfoSubscriber left_info_sub_, right_info_sub_;
   boost::shared_ptr<Publisher> disp_pub_;
   boost::shared_ptr<Publisher> depth_pub_;
+  //
+  ros::Publisher cam_info_pub_;
   boost::shared_ptr<ros::Publisher> pc_pub_;
   boost::shared_ptr<ros::Publisher> elas_fd_pub_;
   boost::shared_ptr<ExactSync> exact_sync_;
