@@ -52,7 +52,7 @@
 
 #define DOWN_SAMPLE
 
-#define VERBOSE_TIMECOST
+// #define VERBOSE_TIMECOST
 
 /*
   void rectifyResizeImg(const sensor_msgs::ImageConstPtr& image_msg, 
