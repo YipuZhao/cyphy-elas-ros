@@ -20,7 +20,7 @@
         <remap from="image" to="image_raw"/>
 
         <param name="disp_min" type="int" value="0"/>
-        <param name="disp_max" type="int" value="255"/>
+        <param name="disp_max" type="int" value="50"/>
         <param name="support_threshold" type="double" value="0.95"/>
         <param name="support_texture" type="int" value="10"/>
         <param name="candidate_stepsize" type="int" value="5"/>
@@ -41,7 +41,7 @@
         <param name="filter_median" type="bool" value="0"/>
         <param name="filter_adaptive_mean" type="bool" value="1"/>
         <param name="postprocess_only_left" type="bool" value="1"/>
-        <param name="subsampling" type="bool" value="0"/>
+        <param name="subsampling" type="bool" value="1"/>
 
         <param name="img_temporal_samp" type="int" value="6"/>
         <!-- rparam name="img_resize_scale" type="double" value="3" -->
