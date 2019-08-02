@@ -591,7 +591,7 @@ public:
       //out_depth_msg_image_data[i] = disp;
       out_depth_msg_image_data[i] = disp <= 0.0f ? bad_point : (float)(depth_fact / disp);
       if (out_depth_msg_image_data[i] < 0.5f)
-	out_depth_msg_image_data[i] = 0.5f;
+	       out_depth_msg_image_data[i] = 0.5f;
 
       if (l_disp_data[i] > 0)
         inliers.push_back(i);
@@ -600,7 +600,7 @@ public:
     // Publish
     disp_pub_->publish(out_msg.toImageMsg());
     depth_pub_->publish(out_depth_msg.toImageMsg());
-    // publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
+    publish_point_cloud(l_image_msg, l_disp_data, inliers, width, height, l_info_msg, r_info_msg);
     
     //TODO publish cam info for depth image
     cam_info_pub_.publish(cam_info_msg);
